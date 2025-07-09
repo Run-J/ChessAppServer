@@ -81,10 +81,15 @@ wss.on('connection' ,(ws) => {
                         ws.send(JSON.stringify({ type: 'error', message: '房间已满' }));
                         return;
                     }
-                    player.push(ws);
+
+                    const color = player.length === 0 ? 'w' : 'b';  // 第一个是白，第二个是黑
+                    ws.color = color;
                     ws.roomId = roomId;
-                    ws.send(JSON.stringify({ type: 'joined', message: '加入成功' }));
-                    console.log(`玩家加入房间 ${roomId}`);
+
+                    player.push(ws);
+                    ws.send(JSON.stringify({ type: 'joined', message: 'color' }));
+
+                    console.log( `玩家加入房间 ${roomId}, 身份：${color}` );
                     break;
 
                 case 'move':
@@ -113,7 +118,7 @@ wss.on('connection' ,(ws) => {
             }
         }
         catch (err) {
-            console.error('解析消息出错:', error);
+            console.error('解析消息出错:', err);
         }
     });
 

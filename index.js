@@ -97,6 +97,16 @@ wss.on('connection' ,(ws) => {
                         });
                     }
                     break;
+                case 'leave':
+                    const players = rooms.get(roomId);
+                    if (players) {
+                        rooms.set(roomId, players.filter((client) => client !== ws));
+                        console.log(`玩家手动退出房间 ${roomId}`);
+                        if (rooms.get(roomId)?.length === 0) {
+                            rooms.delete(roomId);
+                        }
+                    }
+                    break;
 
                 default:
                     ws.send(JSON.stringify({ type: 'error', message: '未知消息类型' }));

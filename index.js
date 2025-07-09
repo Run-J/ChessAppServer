@@ -64,6 +64,8 @@ wss.on('connection' ,(ws) => {
     console.log('新客户端已连接');
 
     ws.on('message', (msg) => {
+          console.log('[服务器收到原始消息]', msg.toString());
+
         try {
             const data = JSON.parse(msg);
             const { type, roomId, payload } = data;
@@ -86,6 +88,8 @@ wss.on('connection' ,(ws) => {
                     break;
 
                 case 'move':
+                    console.log(`[MOVE] 来自房间 ${roomId} 的玩家下了一步: ${payload}`);
+
                     const others = rooms.get(roomId)?.filter((client) => client !== ws);
                     if (others?.length) {
                         others.forEach((client) => {
@@ -105,7 +109,7 @@ wss.on('connection' ,(ws) => {
 
     ws.on('close', () => {
         const roomId = ws.roomId;
-        if (roomId && roomId.has(roomId)) {
+        if (roomId && rooms.has(roomId)) {
             const updated = rooms.get(roomId)?.filter((client) => client !== ws);
             if (updated?.length === 0) {
                 rooms.delete(roomId);

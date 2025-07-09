@@ -87,7 +87,7 @@ wss.on('connection' ,(ws) => {
                     ws.roomId = roomId;
 
                     player.push(ws);
-                    ws.send(JSON.stringify({ type: 'joined', message: 'color' }));
+                    ws.send(JSON.stringify({ type: 'joined', color: color }));
 
                     console.log( `玩家加入房间 ${roomId}, 身份：${color}` );
                     break;

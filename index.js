@@ -14,14 +14,15 @@ app.use(express.json());    // 内置中间件：支持解析 JSON 格式的请�
 // POST /best-move - 获取 AI 走法; 响应前端发来的 /best-move 请求
 app.post('/best-move', async (req, res) => {
 
-    // 从请求体中提取 FEN 字符串
+    // 从请求体中提取 FEN 字符串 和 期待的 AI 难度等级
     const fen = req.body.fen;
+    const aiLevel = req.body.level;
 
     if (!fen) {
         return res.status(400).json({ error: 'Missing FEN string' });
     }
 
-    // 启动引擎（注意：通过 node-uci 调用系统已安装的 Stockfish 引擎）
+    // 启动引擎（注意：通过 node-uci 调用系统已安装的 Stockfish 引擎
     const engine = new Engine('stockfish');
 
     try {
@@ -31,7 +32,7 @@ app.post('/best-move', async (req, res) => {
         await engine.position(fen);       // 设置当前棋盘状态（FEN）
 
         // 让引擎思考并返回最佳走法，depth 代表搜索深度
-        const result = await engine.go({ depth: 10 });
+        const result = await engine.go({ depth: aiLevel });
 
         // 提取并响应最佳走法
         const bestMove = result.bestmove;

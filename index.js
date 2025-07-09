@@ -1,10 +1,15 @@
 const express = require('express');     // 引入 express 框架
 const cors = require('cors');           // 引入 cors 中间件
 const { Engine } = require('node-uci'); // 引入 stockfish 引擎（通过 node-uci 调用系统可执行文件）
+const { WebSocketServer } = require('ws');
+const http = require('http');
 
 // 创建服务器实例，设置端口
 const app = express();
+
+const server = http.createServer(app);
 const port = 3001;
+
 
 // 中间件是对请求对象 req 和响应对象 res 进行处理的函数。可以链式调用。
 app.use(cors());            // 第三方中间件：允许跨域访问
@@ -49,7 +54,71 @@ app.post('/best-move', async (req, res) => {
     }
 });
 
+
+// =========== WebSocket 对战逻辑 =====
+const wss = new WebSocketServer({server});
+
+const rooms = new Map(); // roomId -> [socketA, socketB]
+
+wss.on('connection' ,(ws) => {
+    console.log('新客户端已连接');
+
+    ws.on('message', (msg) => {
+        try {
+            const data = JSON.parse(msg);
+            const { type, roomId, payload } = data;
+
+            switch(type) {
+                case 'join':
+                    if (!rooms.has(roomId)) {
+                        rooms.set(roomId, []);
+                    }
+                    const player = rooms.get(roomId);
+
+                    if (player.length >= 2) {
+                        ws.send(JSON.stringify({ type: 'error', message: '房间已满' }));
+                        return;
+                    }
+                    player.push(ws);
+                    ws.roomId = roomId;
+                    ws.send(JSON.stringify({ type: 'joined', message: '加入成功' }));
+                    console.log(`玩家加入房间 ${roomId}`);
+                    break;
+
+                case 'move':
+                    const others = rooms.get(roomId)?.filter((client) => client !== ws);
+                    if (others?.length) {
+                        others.forEach((client) => {
+                            client.send(JSON.stringify({ type: 'opponentMove', payload}))
+                        });
+                    }
+                    break;
+
+                default:
+                    ws.send(JSON.stringify({ type: 'error', message: '未知消息类型' }));
+            }
+        }
+        catch (err) {
+            console.error('解析消息出错:', error);
+        }
+    });
+
+    ws.on('close', () => {
+        const roomId = ws.roomId;
+        if (roomId && roomId.has(roomId)) {
+            const updated = rooms.get(roomId)?.filter((client) => client !== ws);
+            if (updated?.length === 0) {
+                rooms.delete(roomId);
+            } else {
+                rooms.set(roomId, updated);
+            }
+            console.log(`玩家离开房间 ${roomId}`);
+        }
+    });
+
+});
+
 // 启动服务器
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Stockfish server is running at http://localhost:${port}`);
 });

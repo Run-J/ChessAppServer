@@ -6,20 +6,51 @@ const http = require('http');
 
 // 创建服务器实例，设置端口
 const app = express();
-
 const server = http.createServer(app);
 const port = 3001;
 
+app.use(cors());             // 允许跨域访问
+app.use(express.json());     // 支持解析 JSON 格式的请求体
 
-// 中间件是对请求对象 req 和响应对象 res 进行处理的函数。可以链式调用。
-app.use(cors());            // 第三方中间件：允许跨域访问
-app.use(express.json());    // 内置中间件：支持解析 JSON 格式的请求体
+// ================= 引擎池配置 =================
+const ENGINE_POOL_SIZE = 20; // 可根据机器性能调整并发量
+const enginePool = [];       // 引擎池本体
+const waitingQueue = [];     // 等待队列
 
-// 定义服务端如何响应客户端请求
-// POST /best-move - 获取 AI 走法; 响应前端发来的 /best-move 请求
+// 初始化引擎池
+(async () => {
+    for (let i = 0; i < ENGINE_POOL_SIZE; i++) {
+        const engine = new Engine('stockfish');
+        await engine.init();
+        await engine.isready();
+        enginePool.push(engine);
+    }
+    console.log(`✅ 引擎池已初始化，大小：${ENGINE_POOL_SIZE}`);
+})();
+
+// 从池中借用引擎（如果没有可用引擎则等待
+function acquireEngine() {
+    return new Promise((resolve) => {
+        if (enginePool.length > 0) {
+            resolve(enginePool.pop());
+        } else {
+            waitingQueue.push(resolve);
+        }
+    });
+}
+
+// 将引擎归还到池中（如果有人在等待就立刻借出）
+function releaseEngine(engine) {
+    if (waitingQueue.length > 0) {
+        const resolve = waitingQueue.shift();
+        resolve(engine);
+    } else {
+        enginePool.push(engine);
+    }
+}
+
+// ================= 路由：AI走法接口 =================
 app.post('/best-move', async (req, res) => {
-
-    // 从请求体中提取 FEN 字符串 和 期待的 AI 难度等级
     const fen = req.body.fen;
     const aiLevel = req.body.level;
 
@@ -27,54 +58,46 @@ app.post('/best-move', async (req, res) => {
         return res.status(400).json({ error: 'Missing FEN string' });
     }
 
-    // 启动引擎（注意：通过 node-uci 调用系统已安装的 Stockfish 引擎
-    const engine = new Engine('stockfish');
+    const engine = await acquireEngine(); // 从池中获取引擎
+    const label = `Stockfish-depth-${aiLevel}-${Date.now()}-${Math.random()}`;
 
     try {
-        // 按顺序发送 UCI 协议命令给引擎
-        await engine.init();              // 初始化引擎
-        await engine.isready();           // 等待引擎准备好
         await engine.position(fen);       // 设置当前棋盘状态（FEN）
 
         // 让引擎思考并返回最佳走法，depth 代表搜索深度
+        console.time(label);
         const result = await engine.go({ depth: aiLevel });
+        console.timeEnd(label);
 
-        // 提取并响应最佳走法
         const bestMove = result.bestmove;
         res.json({ move: bestMove });
-
     } catch (err) {
-        // 如果出错，打印错误并返回 500 响应
         console.error('Stockfish error:', err);
         res.status(500).json({ error: 'Engine error' });
-
     } finally {
-        // 不管成功与否，都要退出引擎，释放资源
-        await engine.quit();
+        releaseEngine(engine); // 用完引擎要归还！
     }
 });
 
 
 // =========== WebSocket 对战逻辑 =====
-const wss = new WebSocketServer({server});
+const wss = new WebSocketServer({ server });
 
 const rooms = new Map(); // roomId -> [socketA, socketB]
 
-wss.on('connection' ,(ws) => {
+wss.on('connection', (ws) => {
     console.log('新客户端已连接');
 
     ws.on('message', (msg) => {
-          console.log('[服务器收到原始消息]', msg.toString());
+        console.log('[服务器收到原始消息]', msg.toString());
 
         try {
             const data = JSON.parse(msg);
             const { type, roomId, payload } = data;
 
-            switch(type) {
+            switch (type) {
                 case 'join':
-                    if (!rooms.has(roomId)) {
-                        rooms.set(roomId, []);
-                    }
+                    if (!rooms.has(roomId)) rooms.set(roomId, []);
                     const player = rooms.get(roomId);
 
                     if (player.length >= 2) {
@@ -82,26 +105,26 @@ wss.on('connection' ,(ws) => {
                         return;
                     }
 
-                    const color = player.length === 0 ? 'w' : 'b';  // 第一个是白，第二个是黑
+                    const color = player.length === 0 ? 'w' : 'b';
                     ws.color = color;
                     ws.roomId = roomId;
 
                     player.push(ws);
-                    ws.send(JSON.stringify({ type: 'joined', color: color }));
+                    ws.send(JSON.stringify({ type: 'joined', color }));
 
-                    console.log( `玩家加入房间 ${roomId}, 身份：${color}` );
+                    console.log(`玩家加入房间 ${roomId}, 身份：${color}`);
                     break;
 
                 case 'move':
                     console.log(`[MOVE] 来自房间 ${roomId} 的玩家下了一步: ${payload}`);
-
                     const others = rooms.get(roomId)?.filter((client) => client !== ws);
                     if (others?.length) {
-                        others.forEach((client) => {
-                            client.send(JSON.stringify({ type: 'opponentMove', payload}))
-                        });
+                        others.forEach((client) =>
+                            client.send(JSON.stringify({ type: 'opponentMove', payload }))
+                        );
                     }
                     break;
+
                 case 'leave':
                     const players = rooms.get(roomId);
                     if (players) {
@@ -116,8 +139,7 @@ wss.on('connection' ,(ws) => {
                 default:
                     ws.send(JSON.stringify({ type: 'error', message: '未知消息类型' }));
             }
-        }
-        catch (err) {
+        } catch (err) {
             console.error('解析消息出错:', err);
         }
     });
@@ -134,10 +156,9 @@ wss.on('connection' ,(ws) => {
             console.log(`玩家离开房间 ${roomId}`);
         }
     });
-
 });
 
 // 启动服务器
 server.listen(port, () => {
-    console.log(`Stockfish server is running at http://localhost:${port}`);
+    console.log(`🚀 Stockfish server is running at http://localhost:${port}`);
 });

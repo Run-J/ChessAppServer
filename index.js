@@ -86,7 +86,7 @@ const wss = new WebSocketServer({ server });
 // roomId -> { players: [ws, ws], fen: string, turn: 'w' | 'b' }
 const rooms = new Map();
 
-const INITIAL_FEN = 'rn1qkbnr/ppp2ppp/4p3/3p4/3P4/2N1PN2/PPP2PPP/R1BQKB1R w KQkq - 0 1'; // 中局fen，可替换
+const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 wss.on('connection', (ws) => {
     console.log('新客户端已连接');

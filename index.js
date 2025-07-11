@@ -13,7 +13,7 @@ app.use(cors());             // 允许跨域访问
 app.use(express.json());     // 支持解析 JSON 格式的请求体
 
 // ================= 引擎池配置 =================
-const ENGINE_POOL_SIZE = 20; // 可根据机器性能调整并发量
+const ENGINE_POOL_SIZE = 1; // 可根据机器性能调整并发量
 const enginePool = [];       // 引擎池本体
 const waitingQueue = [];     // 等待队列
 
@@ -83,58 +83,95 @@ app.post('/best-move', async (req, res) => {
 // =========== WebSocket 对战逻辑 =====
 const wss = new WebSocketServer({ server });
 
-const rooms = new Map(); // roomId -> [socketA, socketB]
+// roomId -> { players: [ws, ws], fen: string, turn: 'w' | 'b' }
+const rooms = new Map();
+
+const INITIAL_FEN = 'rn1qkbnr/ppp2ppp/4p3/3p4/3P4/2N1PN2/PPP2PPP/R1BQKB1R w KQkq - 0 1'; // 中局fen，可替换
 
 wss.on('connection', (ws) => {
     console.log('新客户端已连接');
 
     ws.on('message', (msg) => {
-        console.log('[服务器收到原始消息]', msg.toString());
-
         try {
             const data = JSON.parse(msg);
             const { type, roomId, payload } = data;
 
             switch (type) {
-                case 'join':
-                    if (!rooms.has(roomId)) rooms.set(roomId, []);
-                    const player = rooms.get(roomId);
+                case 'join': {
+                    if (!rooms.has(roomId)) {
+                        rooms.set(roomId, {
+                            players: [],
+                            fen: INITIAL_FEN,
+                            turn: 'w',
+                        });
+                    }
 
-                    if (player.length >= 2) {
+                    const room = rooms.get(roomId);
+                    if (room.players.length >= 2) {
                         ws.send(JSON.stringify({ type: 'error', message: '房间已满' }));
                         return;
                     }
 
-                    const color = player.length === 0 ? 'w' : 'b';
+                    const color = room.players.length === 0 ? 'w' : 'b';
                     ws.color = color;
                     ws.roomId = roomId;
+                    room.players.push(ws);
 
-                    player.push(ws);
-                    ws.send(JSON.stringify({ type: 'joined', color }));
+                    ws.send(JSON.stringify({
+                        type: 'joined',
+                        color,
+                        fen: room.fen,
+                        turn: room.turn,
+                    }));
 
-                    console.log(`玩家加入房间 ${roomId}, 身份：${color}`);
+                    console.log(`玩家加入房间 ${roomId}, 颜色：${color}`);
                     break;
+                }
 
-                case 'move':
-                    console.log(`[MOVE] 来自房间 ${roomId} 的玩家下了一步: ${payload}`);
-                    const others = rooms.get(roomId)?.filter((client) => client !== ws);
-                    if (others?.length) {
-                        others.forEach((client) =>
-                            client.send(JSON.stringify({ type: 'opponentMove', payload }))
-                        );
+                case 'move': {
+                    const room = rooms.get(roomId);
+                    if (!room) return;
+
+                    const { from, to, newFen } = payload;
+                    if (ws.color !== room.turn) {
+                        ws.send(JSON.stringify({ type: 'error', message: '还没轮到你走' }));
+                        return;
                     }
-                    break;
 
-                case 'leave':
-                    const players = rooms.get(roomId);
-                    if (players) {
-                        rooms.set(roomId, players.filter((client) => client !== ws));
-                        console.log(`玩家手动退出房间 ${roomId}`);
-                        if (rooms.get(roomId)?.length === 0) {
-                            rooms.delete(roomId);
+                    // 更新房间状态
+                    room.fen = newFen;
+                    room.turn = room.turn === 'w' ? 'b' : 'w';
+
+                    console.log(`[MOVE] ${ws.color} 在房间 ${roomId} 走棋: ${from} -> ${to}`);
+
+                    // 广播给对手
+                    room.players.forEach((client) => {
+                        if (client !== ws) {
+                            client.send(JSON.stringify({
+                                type: 'opponentMove',
+                                payload: {
+                                    from,
+                                    to,
+                                    newFen: room.fen,
+                                }
+                            }));
                         }
+                    });
+                    break;
+                }
+
+                case 'leave': {
+                    const room = rooms.get(roomId);
+                    if (!room) return;
+
+                    console.log(`一名玩家手动退出房间 ${roomId}`);
+                    room.players = room.players.filter((p) => p !== ws);
+                    if (room.players.length === 0) {
+                        rooms.delete(roomId);
+                        console.log(`房间 ${roomId} 已清空并删除`);
                     }
                     break;
+                }
 
                 default:
                     ws.send(JSON.stringify({ type: 'error', message: '未知消息类型' }));
@@ -146,17 +183,17 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         const roomId = ws.roomId;
-        if (roomId && rooms.has(roomId)) {
-            const updated = rooms.get(roomId)?.filter((client) => client !== ws);
-            if (updated?.length === 0) {
-                rooms.delete(roomId);
-            } else {
-                rooms.set(roomId, updated);
-            }
-            console.log(`玩家离开房间 ${roomId}`);
+        if (!roomId || !rooms.has(roomId)) return;
+
+        const room = rooms.get(roomId);
+        room.players = room.players.filter((p) => p !== ws);
+        if (room.players.length === 0) {
+            rooms.delete(roomId);
+            console.log(`房间 ${roomId} 因客户端断开连接被删除`);
         }
     });
 });
+
 
 // 启动服务器
 server.listen(port, () => {

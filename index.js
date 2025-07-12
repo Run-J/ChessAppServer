@@ -117,6 +117,8 @@ wss.on('connection', (ws) => {
                     ws.roomId = roomId;
                     room.players.push(ws);
 
+                    console.log(`发送给玩家的房间状态:`, room); // ✅ 调试输出
+
                     ws.send(JSON.stringify({
                         type: 'joined',
                         color,
@@ -139,6 +141,7 @@ wss.on('connection', (ws) => {
                     }
 
                     // 更新房间状态
+                    console.log('服务器收到来自客户端的newFen在move:', newFen);
                     room.fen = newFen;
                     room.turn = room.turn === 'w' ? 'b' : 'w';
 
@@ -182,16 +185,23 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
-        const roomId = ws.roomId;
-        if (!roomId || !rooms.has(roomId)) return;
-
+    const roomId = ws.roomId;
+    if (roomId && rooms.has(roomId)) {
         const room = rooms.get(roomId);
-        room.players = room.players.filter((p) => p !== ws);
+        if (room) {
+        room.players = room.players.filter(p => p !== ws);
+
+        console.log(`一名玩家与房间 断开连接 ${roomId}`);
+
+        // 如果房间没人了，清空整个房间
         if (room.players.length === 0) {
             rooms.delete(roomId);
-            console.log(`房间 ${roomId} 因客户端断开连接被删除`);
+            console.log(`房间 ${roomId} 已清空`);
         }
+        }
+    }
     });
+
 });
 
 

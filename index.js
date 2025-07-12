@@ -24,8 +24,14 @@ const waitingQueue = [];     // 等待队列
         await engine.init();
         await engine.isready();
         enginePool.push(engine);
+
+        // 👇 打印 Stockfish 子进程 PID（node-uci 内部有 child_process）
+        const stockfishPid = engine.engineProcess?.pid;
+        console.log(`♟️ 引擎 ${i} PID: ${stockfishPid}`);
     }
+    
     console.log(`✅ 引擎池已初始化，大小：${ENGINE_POOL_SIZE}`);
+    console.log("🧠 Node 后端 PID:", process.pid);
 })();
 
 // 从池中借用引擎（如果没有可用引擎则等待
